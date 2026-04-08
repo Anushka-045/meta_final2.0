@@ -1,0 +1,193 @@
+name: compliance-monitor
+version: "1.0.0"
+tags: [openenv]
+description: >
+  AI-powered compliance monitoring environment.
+  An agent ingests structured compliance rules and scans company records
+  to detect violations, assign severity, generate plain-English explanations,
+  suggest fixes, and flag policy conflicts. Three graded tasks of increasing difficulty.
+
+author: RunTimers (Gargi Monga + Anushka Pandey)
+
+tasks:
+  - id: task_easy
+    name: Single Record Audit
+    description: >
+      Check one employee record (EMP001) against one rule (RULE001 — background check).
+      Binary score: 1.0 if violation found, 0.0 otherwise.
+    difficulty: easy
+    max_steps: 10
+    grader: task1_grader.py
+
+  - id: task_medium
+    name: Multi-Record HR Audit
+    description: >
+      Scan 30 employee records against 4 HR rules. Partial credit scoring.
+      Reward detection accuracy and correct severity labelling.
+    difficulty: medium
+    max_steps: 60
+    grader: task2_grader.py
+
+  - id: task_hard
+    name: Full Database Audit with Conflicting Policies
+    description: >
+      Scan all 60 records (employees, contracts, transactions) against 10 rules
+      plus 2 conflicting rule pairs. Scored on detection, severity, explanation
+      quality, fix suggestions, and conflict resolution.
+    difficulty: hard
+    max_steps: 200
+    grader: task3_grader.py
+
+reward:
+  type: shaped
+  description: detection(0.4) + severity(0.2) + explanation(0.2) + fix(0.2) - false_positive(-0.1)
+  range: [0.0, 1.0]
+  shaped: true
+  components:
+    flag_violation:
+      value: 0.4
+      description: Correctly flagging a record+rule violation pair
+    assign_severity:
+      value: 0.2
+      description: Correctly labelling severity (Critical/High/Medium/Low)
+    generate_explanation:
+      value: 0.2
+      description: Generating a meaningful plain-English explanation (>20 chars)
+    suggest_fix:
+      value: 0.2
+      description: Suggesting an actionable fix (starts with action verb, >15 chars)
+    resolve_conflict:
+      value: 0.2
+      description: Documenting a known policy conflict with resolution (>30 chars)
+    false_positive_penalty:
+      value: -0.1
+      description: Penalty per incorrectly flagged record+rule pair
+
+observation_space:
+  type: dict
+  fields:
+    records:
+      type: list
+      description: Company records (employees, contracts, transactions)
+    rules:
+      type: list
+      description: Active compliance rules extracted from policy documents
+    violations:
+      type: list
+      description: Currently flagged violations with severity and explanation
+    conflicts:
+      type: list
+      description: Detected policy conflicts
+    checked_record_ids:
+      type: list
+      description: IDs of records already inspected this episode
+    task_id:
+      type: string
+      enum: [task_easy, task_medium, task_hard]
+    episode_step:
+      type: integer
+    max_steps:
+      type: integer
+    done:
+      type: boolean
+    total_reward:
+      type: number
+
+action_space:
+  type: dict
+  actions:
+    check_record:
+      description: Inspect a specific record by ID
+      params:
+        record_id: string
+    flag_violation:
+      description: Flag a record as violating a specific rule
+      params:
+        record_id: string
+        rule_id: string
+        reason: string
+    assign_severity:
+      description: Assign severity level to a flagged violation
+      params:
+        violation_id: string
+        severity:
+          type: string
+          enum: [Low, Medium, High, Critical]
+    generate_explanation:
+      description: Generate plain-English explanation for a violation
+      params:
+        violation_id: string
+        explanation: string
+    suggest_fix:
+      description: Suggest a remediation action for a violation
+      params:
+        violation_id: string
+        fix: string
+    resolve_conflict:
+      description: Document a conflict between two policy rules
+      params:
+        rule_id_a: string
+        rule_id_b: string
+        resolution: string
+
+environment:
+  type: http
+  base_url: "http://localhost:7860"
+  name: ComplianceEnvironment
+  module: environment
+  class: ComplianceEnvironment
+
+api:
+  reset:
+    method: POST
+    path: /reset
+    body:
+      task_id:
+        type: string
+        enum: [task_easy, task_medium, task_hard]
+        default: task_easy
+      seed:
+        type: integer
+        default: 42
+    returns: observation
+
+  step:
+    method: POST
+    path: /step
+    body:
+      action:
+        type: dict
+    returns:
+      observation: dict
+      reward: float
+      done: boolean
+      info: dict
+
+  state:
+    method: GET
+    path: /state
+    returns: current episode state
+
+  health:
+    method: GET
+    path: /health
+    returns:
+      status: string
+      environment: string
+      version: string
+
+graders:
+  task_easy:
+    file: task1_grader.py
+    scoring: binary (0.0 or 1.0)
+  task_medium:
+    file: task2_grader.py
+    scoring: partial_credit
+  task_hard:
+    file: task3_grader.py
+    scoring: weighted_components
+
+episode:
+  termination:
+    - all_records_checked
+    - max_steps_reached

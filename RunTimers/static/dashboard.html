@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compliance Monitor</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #18181f;
+    --border: #2a2a35;
+    --accent: #e8ff47;
+    --accent2: #ff4757;
+    --accent3: #3ecfcf;
+    --accent4: #ff8c42;
+    --text: #e8e8f0;
+    --muted: #6b6b80;
+    --critical: #ff4757;
+    --high: #ff8c42;
+    --medium: #ffd166;
+    --low: #3ecfcf;
+    --mono: 'DM Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: 
+      radial-gradient(circle at 20% 50%, rgba(232,255,71,0.03) 0%, transparent 50%),
+      radial-gradient(circle at 80% 20%, rgba(62,207,207,0.03) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── HEADER ── */
+  header {
+    padding: 2rem 0 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .logo-mark {
+    width: 40px;
+    height: 40px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  }
+
+  .logo-mark svg { width: 20px; height: 20px; }
+
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  h1 span { color: var(--accent); }
+
+  .header-meta {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.6;
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3ecfcf;
+    margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── SCORE BANNER ── */
+  .score-banner {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5px;
+    margin: 1.5px 0;
+    background: var(--border);
+  }
+
+  .score-hero {
+    background: var(--surface);
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .score-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  .score-value {
+    font-size: 5rem;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--accent);
+    transition: color 0.4s;
+  }
+
+  .score-value.warn { color: var(--high); }
+  .score-value.danger { color: var(--critical); }
+
+  .score-sub {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-top: 0.5rem;
+  }
+
+  .metrics-grid {
+    background: var(--surface);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5px;
+    background: var(--border);
+  }
+
+  .metric-card {
+    background: var(--surface);
+    padding: 1.5rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    transition: background 0.2s;
+    cursor: default;
+  }
+
+  .metric-card:hover { background: var(--surface2); }
+
+  .metric-label {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .metric-value {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+
+  .metric-value.critical { color: var(--critical); }
+  .metric-value.high { color: var(--high); }
+  .metric-value.medium { color: var(--medium); }
+  .metric-value.low { color: var(--low); }
+
+  .metric-badge {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 2px;
+    width: fit-content;
+  }
+
+  .metric-badge.critical { background: rgba(255,71,87,0.15); color: var(--critical); }
+  .metric-badge.high { background: rgba(255,140,66,0.15); color: var(--high); }
+  .metric-badge.medium { background: rgba(255,209,102,0.12); color: var(--medium); }
+  .metric-badge.low { background: rgba(62,207,207,0.12); color: var(--low); }
+
+  /* ── MAIN GRID ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 1.5px;
+    background: var(--border);
+    margin-bottom: 1.5px;
+  }
+
+  .panel {
+    background: var(--surface);
+    padding: 1.5rem;
+  }
+
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .panel-title::before {
+    content: '';
+    width: 3px;
+    height: 12px;
+    background: var(--accent);
+  }
+
+  /* ── VIOLATIONS TABLE ── */
+  .violations-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  .violations-table th {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 0 0.75rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 400;
+  }
+
+  .violations-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid rgba(42,42,53,0.5);
+    vertical-align: top;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+  }
+
+  .violations-table tr:last-child td { border-bottom: none; }
+
+  .violations-table tr:hover td { background: var(--surface2); }
+
+  .record-id {
+    font-weight: 500;
+    color: var(--accent3);
+  }
+
+  .rule-id {
+    color: var(--accent);
+    font-size: 0.65rem;
+  }
+
+  .sev-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 2px;
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+  }
+
+  .sev-tag.Critical { background: rgba(255,71,87,0.18); color: var(--critical); border: 1px solid rgba(255,71,87,0.3); }
+  .sev-tag.High     { background: rgba(255,140,66,0.18); color: var(--high);     border: 1px solid rgba(255,140,66,0.3); }
+  .sev-tag.Medium   { background: rgba(255,209,102,0.12); color: var(--medium);  border: 1px solid rgba(255,209,102,0.25); }
+  .sev-tag.Low      { background: rgba(62,207,207,0.12); color: var(--low);      border: 1px solid rgba(62,207,207,0.25); }
+
+  .detail-text {
+    color: var(--muted);
+    font-size: 0.65rem;
+    max-width: 320px;
+    line-height: 1.4;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar { display: flex; flex-direction: column; gap: 1.5px; background: var(--border); }
+
+  .sidebar-panel {
+    background: var(--surface);
+    padding: 1.25rem;
+    flex: 1;
+  }
+
+  /* ── PDF UPLOAD ── */
+  .upload-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 4px;
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(232,255,71,0.04);
+  }
+
+  .upload-zone input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .upload-icon {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+
+  .upload-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .upload-label strong { color: var(--accent); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.2rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    border: none;
+    border-radius: 2px;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #0a0a0f;
+  }
+
+  .btn-primary:hover { background: #d4eb3a; }
+  .btn-primary:active { transform: scale(0.98); }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover { border-color: var(--accent3); color: var(--accent3); }
+
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── RULES LIST ── */
+  .rules-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 320px; overflow-y: auto; }
+
+  .rule-item {
+    padding: 0.65rem 0.75rem;
+    background: var(--surface2);
+    border-left: 2px solid var(--border);
+    transition: border-color 0.2s;
+  }
+
+  .rule-item:hover { border-color: var(--accent3); }
+  .rule-item.pdf-rule { border-color: var(--accent); }
+
+  .rule-item-id {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--accent);
+    margin-bottom: 0.2rem;
+  }
+
+  .rule-item-text {
+    font-size: 0.72rem;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .rule-item-cat {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    color: var(--muted);
+    margin-top: 0.25rem;
+  }
+
+  /* ── TREND BAR ── */
+  .trend-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 60px;
+    margin-bottom: 0.75rem;
+  }
+
+  .trend-bar {
+    flex: 1;
+    background: var(--accent);
+    opacity: 0.6;
+    border-radius: 1px 1px 0 0;
+    transition: opacity 0.2s, height 0.4s;
+    min-height: 2px;
+    cursor: pointer;
+  }
+
+  .trend-bar:hover { opacity: 1; }
+
+  .trend-meta {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+  }
+
+  /* ── ALERTS ── */
+  .alert {
+    padding: 0.6rem 0.75rem;
+    border-left: 3px solid;
+    margin-bottom: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    line-height: 1.4;
+  }
+
+  .alert.Critical { border-color: var(--critical); background: rgba(255,71,87,0.08); color: var(--critical); }
+  .alert.High     { border-color: var(--high);     background: rgba(255,140,66,0.08); color: var(--high); }
+  .alert.Medium   { border-color: var(--medium);   background: rgba(255,209,102,0.06); color: var(--medium); }
+
+  /* ── ACTIONS BAR ── */
+  .actions-bar {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .filter-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+
+  .filter-select:focus { outline: none; border-color: var(--accent3); }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ── LOADING / EMPTY ── */
+  .loading {
+    text-align: center;
+    padding: 2rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .loading::after {
+    content: '...';
+    animation: dots 1.5s infinite;
+  }
+
+  @keyframes dots {
+    0%,20% { content: '.'; }
+    40%,60% { content: '..'; }
+    80%,100% { content: '...'; }
+  }
+
+  .empty {
+    text-align: center;
+    padding: 2rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text);
+    z-index: 1000;
+    max-width: 300px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.25s;
+  }
+
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-in { animation: fadeIn 0.3s ease forwards; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-mark">
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" stroke="#0a0a0f" stroke-width="2"/>
+          <path d="M10 6V10L13 12" stroke="#0a0a0f" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Compliance<span>Monitor</span></h1>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div><span class="status-dot"></span>PIPELINE ACTIVE</div>
+      <div id="last-scan-time">Last scan: —</div>
+      <div id="api-url-display">API: localhost:7861</div>
+    </div>
+  </header>
+
+  <!-- SCORE BANNER -->
+  <div class="score-banner" style="margin-top:1.5px">
+    <div class="score-hero">
+      <div class="score-label">Compliance Score</div>
+      <div class="score-value" id="compliance-score">—</div>
+      <div class="score-sub" id="score-sub">Loading database...</div>
+    </div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Critical</div>
+        <div class="metric-value critical" id="count-critical">0</div>
+        <div class="metric-badge critical">IMMEDIATE</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">High</div>
+        <div class="metric-value high" id="count-high">0</div>
+        <div class="metric-badge high">URGENT</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Medium</div>
+        <div class="metric-value medium" id="count-medium">0</div>
+        <div class="metric-badge medium">REVIEW</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Low</div>
+        <div class="metric-value low" id="count-low">0</div>
+        <div class="metric-badge low">MONITOR</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTIONS BAR -->
+  <div class="actions-bar">
+    <button class="btn btn-primary" onclick="runScan()">▶ Run Full Scan</button>
+    <button class="btn btn-secondary" onclick="detectConflicts()">⚡ Detect Conflicts</button>
+    <select class="filter-select" id="filter-type" onchange="filterViolations()">
+      <option value="">All Record Types</option>
+      <option value="employee">Employees</option>
+      <option value="contract">Contracts</option>
+      <option value="transaction">Transactions</option>
+    </select>
+    <select class="filter-select" id="filter-severity" onchange="filterViolations()">
+      <option value="">All Severities</option>
+      <option value="Critical">Critical</option>
+      <option value="High">High</option>
+      <option value="Medium">Medium</option>
+      <option value="Low">Low</option>
+    </select>
+    <span id="scan-status" style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);margin-left:auto;"></span>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="main-grid">
+    <!-- VIOLATIONS PANEL -->
+    <div class="panel">
+      <div class="panel-title">Detected Violations</div>
+      <div id="violations-container">
+        <div class="loading">Awaiting scan</div>
+      </div>
+    </div>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <!-- PDF UPLOAD -->
+      <div class="sidebar-panel">
+        <div class="panel-title">PDF Policy Ingestion</div>
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" id="pdf-input" accept=".pdf" onchange="uploadPDF(this)">
+          <span class="upload-icon">⬆</span>
+          <div class="upload-label">
+            <strong>Drop PDF here</strong><br>
+            or click to browse<br>
+            Policy rules extracted automatically
+          </div>
+        </div>
+        <div id="upload-status" style="margin-top:0.75rem;font-family:var(--mono);font-size:0.65rem;color:var(--muted);"></div>
+      </div>
+
+      <!-- ACTIVE RULES -->
+      <div class="sidebar-panel">
+        <div class="panel-title">Active Rules <span id="rules-count" style="color:var(--accent);"></span></div>
+        <div class="rules-list" id="rules-list">
+          <div class="loading">Loading rules</div>
+        </div>
+      </div>
+
+      <!-- TREND -->
+      <div class="sidebar-panel">
+        <div class="panel-title">Compliance Trend</div>
+        <div class="trend-bars" id="trend-bars"></div>
+        <div class="trend-meta">
+          <span id="trend-oldest">—</span>
+          <span id="trend-latest">—</span>
+        </div>
+        <div id="alerts-container" style="margin-top:0.75rem;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+  const API = window.location.origin.includes('localhost') 
+    ? 'http://localhost:7861'
+    : window.location.origin;
+
+  let allViolations = [];
+
+  // ── INIT ────────────────────────────────────────────────────────────────
+  async function init() {
+    document.getElementById('api-url-display').textContent = `API: ${new URL(API).host}`;
+    await Promise.all([loadSummary(), loadRules(), loadTrend()]);
+  }
+
+  // ── SUMMARY ─────────────────────────────────────────────────────────────
+  async function loadSummary() {
+    try {
+      const res = await fetch(`${API}/summary`);
+      const data = await res.json();
+      updateScoreDisplay(data);
+    } catch(e) {
+      document.getElementById('compliance-score').textContent = '—';
+      document.getElementById('score-sub').textContent = 'Server offline';
+    }
+  }
+
+  function updateScoreDisplay(data) {
+    const score = Math.round((data.compliance_score || 0) * 100);
+    const el = document.getElementById('compliance-score');
+    el.textContent = `${score}%`;
+    el.className = 'score-value' + (score < 70 ? ' danger' : score < 85 ? ' warn' : '');
+    document.getElementById('score-sub').textContent = 
+      `${data.total_records || 0} records · ${data.active_violations || 0} violations · ${data.rules_loaded || 0} rules`;
+    document.getElementById('count-critical').textContent = data.severity_breakdown?.Critical || 0;
+    document.getElementById('count-high').textContent = data.severity_breakdown?.High || 0;
+    document.getElementById('count-medium').textContent = data.severity_breakdown?.Medium || 0;
+    document.getElementById('count-low').textContent = data.severity_breakdown?.Low || 0;
+  }
+
+  // ── SCAN ─────────────────────────────────────────────────────────────────
+  async function runScan() {
+    const status = document.getElementById('scan-status');
+    const container = document.getElementById('violations-container');
+    status.textContent = 'Scanning...';
+    container.innerHTML = '<div class="loading">Running compliance scan</div>';
+    
+    try {
+      const res = await fetch(`${API}/scan`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ record_type: null, include_explanations: false })
+      });
+      const data = await res.json();
+      allViolations = data.violations || [];
+      
+      updateScoreDisplay(data.summary || {});
+      renderViolations(allViolations);
+      renderAlerts(data.alerts || []);
+      
+      document.getElementById('last-scan-time').textContent = 
+        `Last scan: ${new Date().toLocaleTimeString()}`;
+      status.textContent = `${allViolations.length} violations found`;
+      
+      await loadTrend();
+      showToast(`Scan complete — ${allViolations.length} violations detected`);
+    } catch(e) {
+      status.textContent = 'Scan failed';
+      container.innerHTML = `<div class="empty">Could not reach API server at ${API}</div>`;
+    }
+  }
+
+  // ── RENDER VIOLATIONS ────────────────────────────────────────────────────
+  function renderViolations(violations) {
+    const container = document.getElementById('violations-container');
+    if (!violations.length) {
+      container.innerHTML = '<div class="empty">✓ No violations detected</div>';
+      return;
+    }
+
+    const rows = violations.map((v, i) => `
+      <tr class="animate-in" style="animation-delay:${i * 0.03}s">
+        <td><span class="record-id">${v.record_id}</span></td>
+        <td><span class="rule-id">${v.rule_id}</span><br>
+            <span style="font-size:0.6rem;color:var(--muted)">${v.rule_category || ''}</span></td>
+        <td><span class="sev-tag ${v.severity}">${v.severity}</span></td>
+        <td><div class="detail-text">${v.detail || v.explanation || '—'}</div></td>
+        <td><span style="font-size:0.6rem;color:var(--muted)">${v.record_type || ''}</span></td>
+      </tr>
+    `).join('');
+
+    container.innerHTML = `
+      <table class="violations-table">
+        <thead>
+          <tr>
+            <th>Record</th>
+            <th>Rule</th>
+            <th>Severity</th>
+            <th>Detail</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  function filterViolations() {
+    const type = document.getElementById('filter-type').value;
+    const sev = document.getElementById('filter-severity').value;
+    let filtered = allViolations;
+    if (type) filtered = filtered.filter(v => v.record_type === type);
+    if (sev) filtered = filtered.filter(v => v.severity === sev);
+    renderViolations(filtered);
+  }
+
+  // ── RULES ────────────────────────────────────────────────────────────────
+  async function loadRules() {
+    try {
+      const res = await fetch(`${API}/rules`);
+      const data = await res.json();
+      const rules = data.rules || [];
+      document.getElementById('rules-count').textContent = `(${rules.length})`;
+      document.getElementById('rules-list').innerHTML = rules.map(r => `
+        <div class="rule-item ${r.source !== 'builtin' ? 'pdf-rule' : ''}">
+          <div class="rule-item-id">${r.id}</div>
+          <div class="rule-item-text">${r.text}</div>
+          <div class="rule-item-cat">${r.category} · <span class="sev-tag ${r.severity_hint}" style="font-size:0.55rem;padding:1px 5px">${r.severity_hint}</span>${r.source !== 'builtin' ? ' · <span style="color:var(--accent)">PDF</span>' : ''}</div>
+        </div>
+      `).join('') || '<div class="empty">No rules loaded</div>';
+    } catch(e) {
+      document.getElementById('rules-list').innerHTML = '<div class="empty">Could not load rules</div>';
+    }
+  }
+
+  // ── TREND ────────────────────────────────────────────────────────────────
+  async function loadTrend() {
+    try {
+      const res = await fetch(`${API}/trend?limit=20`);
+      const data = await res.json();
+      renderTrend(data.history || []);
+      renderAlerts(data.alerts || []);
+    } catch(e) {}
+  }
+
+  function renderTrend(history) {
+    const container = document.getElementById('trend-bars');
+    if (!history.length) {
+      container.innerHTML = '<div style="font-family:var(--mono);font-size:0.65rem;color:var(--muted)">No scan history yet</div>';
+      return;
+    }
+    const maxViol = Math.max(...history.map(h => h.total_violations), 1);
+    container.innerHTML = history.slice(0, 20).reverse().map(h => {
+      const pct = Math.max(4, (h.total_violations / maxViol) * 100);
+      const score = Math.round(h.compliance_score * 100);
+      const color = score >= 85 ? 'var(--accent)' : score >= 70 ? 'var(--high)' : 'var(--critical)';
+      return `<div class="trend-bar" style="height:${pct}%;background:${color}" title="${score}% — ${h.total_violations} violations\n${h.scan_time?.slice(0,19) || ''}"></div>`;
+    }).join('');
+
+    if (history.length >= 2) {
+      document.getElementById('trend-oldest').textContent = history[history.length-1]?.scan_time?.slice(0,10) || '';
+      document.getElementById('trend-latest').textContent = history[0]?.scan_time?.slice(0,10) || '';
+    }
+  }
+
+  function renderAlerts(alerts) {
+    const container = document.getElementById('alerts-container');
+    if (!alerts.length) { container.innerHTML = ''; return; }
+    container.innerHTML = alerts.map(a => `
+      <div class="alert ${a.severity}">${a.message}</div>
+    `).join('');
+  }
+
+  // ── CONFLICTS ────────────────────────────────────────────────────────────
+  async function detectConflicts() {
+    showToast('Detecting policy conflicts...');
+    try {
+      const res = await fetch(`${API}/scan/conflicts`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      const data = await res.json();
+      const conflicts = data.conflicts || [];
+      if (!conflicts.length) { showToast('No conflicts detected ✓'); return; }
+      showToast(`${conflicts.length} conflict(s) detected — check console`);
+      console.table(conflicts);
+    } catch(e) { showToast('Conflict detection failed'); }
+  }
+
+  // ── PDF UPLOAD ────────────────────────────────────────────────────────────
+  async function uploadPDF(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const status = document.getElementById('upload-status');
+    status.textContent = `Uploading ${file.name}...`;
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const res = await fetch(`${API}/ingest/pdf`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const err = await res.json();
+        status.textContent = `Error: ${err.detail}`;
+        return;
+      }
+      const data = await res.json();
+      status.textContent = `✓ Extracted ${data.rules_extracted} rules from ${file.name}`;
+      await loadRules();
+      showToast(`PDF ingested — ${data.rules_extracted} rules extracted`);
+    } catch(e) {
+      status.textContent = `Upload failed: ${e.message}`;
+    }
+    input.value = '';
+  }
+
+  // Drag & drop
+  const zone = document.getElementById('upload-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file?.name.endsWith('.pdf')) {
+      document.getElementById('pdf-input').files = e.dataTransfer.files;
+      uploadPDF(document.getElementById('pdf-input'));
+    }
+  });
+
+  // ── TOAST ────────────────────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  // ── START ────────────────────────────────────────────────────────────────
+  init();
+  // Auto-scan on load
+  setTimeout(runScan, 800);
+</script>
+</body>
+</html>
