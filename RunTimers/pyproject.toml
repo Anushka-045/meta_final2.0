@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "compliance-monitor"
+version = "1.0.0"
+description = "RunTimers — AI Compliance Monitor (OpenEnv compatible)"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*", "static*"]
