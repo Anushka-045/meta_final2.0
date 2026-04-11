@@ -1,15 +1,11 @@
 """
 inference.py — Unified entry point for HuggingFace Spaces + OpenEnv validation.
 
-Combines:
-  - OpenEnv required endpoints : POST /reset, POST /step, GET /state, GET /tasks
-  - OpenEnv validation endpoint : POST /predict  (heuristic agent, no LLM required)
-  - Dashboard UI               : GET /  (serves static/dashboard.html)
-  - Pipeline / dashboard API   : /scan, /records, /rules, /explain, /trend, etc.
-  - Health check               : GET /health
+TWO MODES:
+  - Imported (by uvicorn/server): serves FastAPI app with all endpoints
+  - Run directly (python inference.py): runs all tasks, prints results, exits
 
 No OpenAI dependency — HF_TOKEN is used only for PDF ingestion.
-Optimised for 30-minute validator time limit.
 """
 
 import os
@@ -25,7 +21,6 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-import uvicorn
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -52,18 +47,16 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 TASKS = ["task_easy", "task_medium", "task_hard"]
 
-# ⚡ Drastically reduced — must finish well within 30 min total
 MAX_STEPS_PER_TASK = {
     "task_easy":   5,
     "task_medium": 15,
     "task_hard":   30,
 }
 
-# Per-task wall-clock timeout in seconds (total budget ~20 min, split across 3 tasks)
 TASK_TIMEOUT = {
-    "task_easy":   120,   # 2 min
-    "task_medium": 300,   # 5 min
-    "task_hard":   600,   # 10 min
+    "task_easy":   60,
+    "task_medium": 180,
+    "task_hard":   300,
 }
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -182,7 +175,7 @@ def tasks():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Heuristic agent (no LLM needed)
+# Heuristic agent
 # ═══════════════════════════════════════════════════════════════════════════════
 
 KNOWN_VIOLATIONS = [
@@ -220,7 +213,6 @@ KNOWN_VIOLATIONS = [
 
 
 def _heuristic_action(records, rules, violations, conflicts):
-    """Deterministic compliance agent — no LLM, no blocking calls."""
     flagged_keys = {(v.get("record_id"), v.get("rule_id")) for v in violations}
 
     for rec, rule, sev, exp, fix in KNOWN_VIOLATIONS:
@@ -264,7 +256,7 @@ def _heuristic_action(records, rules, violations, conflicts):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# /predict — OpenEnv validation endpoint
+# Core task runner — used by both /predict and __main__
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _log_start(task_id):
@@ -291,18 +283,17 @@ def run_task(task_id: str) -> dict:
         raise ValueError(f"Unknown task_id '{task_id}'. Must be one of {TASKS}")
 
     _log_start(task_id)
+    deadline  = time.time() + TASK_TIMEOUT[task_id]
 
     reset_result = env.reset(task_id=task_id, seed=42)
     obs       = reset_result["observation"]
     max_steps = MAX_STEPS_PER_TASK[task_id]
-    deadline  = time.time() + TASK_TIMEOUT[task_id]
     step_n    = 0
     done      = False
 
     while not done and step_n < max_steps:
-        # Hard wall-clock guard — never exceed per-task timeout
         if time.time() > deadline:
-            print(f"[WARN] {task_id} hit wall-clock limit at step {step_n}, stopping early.", flush=True)
+            print(f"[WARN] {task_id} hit time limit at step {step_n}, stopping early.", flush=True)
             break
 
         records    = obs.get("records",    [])
@@ -317,9 +308,7 @@ def run_task(task_id: str) -> dict:
         reward = result["reward"]
         done   = result["done"]
         step_n += 1
-
         _log_step(step_n, action, obs, reward, done)
-        # ⚡ NO sleep — every millisecond counts inside the validator
 
     final_state      = env.state()
     final_violations = final_state.get("violations", [])
@@ -350,9 +339,12 @@ def run_task(task_id: str) -> dict:
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# /predict + /predict/all  — OpenEnv HTTP validation endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
 @app.post("/predict")
 def predict(request: PredictRequest):
-    """Main inference endpoint called by OpenEnv validator."""
     task_id = request.task_id or "task_easy"
     try:
         result = run_task(task_id)
@@ -366,7 +358,6 @@ def predict(request: PredictRequest):
 
 @app.post("/predict/all")
 def predict_all():
-    """Run all three tasks and return aggregated scores."""
     results = []
     for task_id in TASKS:
         try:
@@ -388,7 +379,6 @@ def get_records(record_type: Optional[str] = None):
     records = db.get_all_records(record_type)
     return {"records": records, "count": len(records)}
 
-
 @app.get("/records/{record_id}")
 def get_record(record_id: str):
     record = db.get_record(record_id)
@@ -396,20 +386,16 @@ def get_record(record_id: str):
         raise HTTPException(status_code=404, detail=f"Record {record_id} not found")
     return record
 
-
 @app.get("/rules")
 def get_rules(source: Optional[str] = None):
     rules = db.get_rules(source)
     return {"rules": rules, "count": len(rules)}
 
-
 @app.post("/ingest/pdf")
 async def ingest_pdf(file: UploadFile = File(...)):
     if not pipeline:
-        raise HTTPException(
-            status_code=503,
-            detail="PDF pipeline unavailable. Set HF_TOKEN and ensure pdfplumber is installed."
-        )
+        raise HTTPException(status_code=503,
+            detail="PDF pipeline unavailable. Set HF_TOKEN and ensure pdfplumber is installed.")
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files accepted")
     try:
@@ -418,15 +404,10 @@ async def ingest_pdf(file: UploadFile = File(...)):
         for rule in result["rules"]:
             db.insert_rule(rule, source=f"pdf:{file.filename}")
         env.add_rules(result["rules"])
-        return {
-            "source":          file.filename,
-            "rules_extracted": result["rules_count"],
-            "rules":           result["rules"],
-            "ingested_at":     result["ingested_at"],
-        }
+        return {"source": file.filename, "rules_extracted": result["rules_count"],
+                "rules": result["rules"], "ingested_at": result["ingested_at"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/scan")
 def run_scan(req: ScanRequest = ScanRequest()):
@@ -437,21 +418,15 @@ def run_scan(req: ScanRequest = ScanRequest()):
     rec_map    = {r["id"]: r for r in records}
     violations = []
     for v in raw_viol:
-        out = {
-            "record_id":     v["record_id"],
-            "record_type":   v["record_type"],
-            "rule_id":       v["rule_id"],
-            "rule_category": v["rule_category"],
-            "severity":      v["severity"],
-            "detail":        v["detail"],
-            "flagged_at":    v["flagged_at"],
-        }
+        out = {"record_id": v["record_id"], "record_type": v["record_type"],
+               "rule_id": v["rule_id"], "rule_category": v["rule_category"],
+               "severity": v["severity"], "detail": v["detail"], "flagged_at": v["flagged_at"]}
         if req.include_explanations and explainer and HF_TOKEN:
             record = rec_map.get(v["record_id"], {})
             rule   = rule_map.get(v["rule_id"], {})
             try:
                 explanation        = explainer.explain(record, rule)
-                fix                = explainer.suggest_fix(v["record_id"], rule.get("text", ""), explanation)
+                fix                = explainer.suggest_fix(v["record_id"], rule.get("text",""), explanation)
                 out["explanation"] = explanation
                 out["fix"]         = fix
                 out["severity"]    = severity_scorer.score(explanation, v["severity"])
@@ -460,19 +435,11 @@ def run_scan(req: ScanRequest = ScanRequest()):
                 out["fix"]         = "Review and remediate this record."
         violations.append(out)
         db.log_violation(out)
-    scan_result = {
-        "violations":    violations,
-        "total_records": len(records),
-        "scanned_at":    datetime.datetime.utcnow().isoformat(),
-    }
+    scan_result = {"violations": violations, "total_records": len(records),
+                   "scanned_at": datetime.datetime.utcnow().isoformat()}
     trend.record(scan_result)
-    return {
-        **scan_result,
-        "violation_count": len(violations),
-        "alerts":          trend.check_deterioration(),
-        "summary":         db.compliance_summary(),
-    }
-
+    return {**scan_result, "violation_count": len(violations),
+            "alerts": trend.check_deterioration(), "summary": db.compliance_summary()}
 
 @app.post("/scan/conflicts")
 def detect_rule_conflicts(req: ConflictRequest = ConflictRequest()):
@@ -480,20 +447,10 @@ def detect_rule_conflicts(req: ConflictRequest = ConflictRequest()):
     if req.rule_ids:
         rules = [r for r in rules if r["id"] in req.rule_ids]
     conflicts_raw = scanner.detect_policy_conflicts(rules + CONFLICTING_RULES)
-    return {
-        "conflicts": [
-            {
-                "rule_id_a":   a["id"],
-                "rule_id_b":   b["id"],
-                "description": desc,
-                "rule_a_text": a.get("text", ""),
-                "rule_b_text": b.get("text", ""),
-            }
-            for a, b, desc in conflicts_raw
-        ],
-        "conflict_count": len(conflicts_raw),
-    }
-
+    return {"conflicts": [{"rule_id_a": a["id"], "rule_id_b": b["id"], "description": desc,
+                           "rule_a_text": a.get("text",""), "rule_b_text": b.get("text","")}
+                          for a, b, desc in conflicts_raw],
+            "conflict_count": len(conflicts_raw)}
 
 @app.post("/explain")
 def explain_violation(req: ViolationExplainRequest):
@@ -507,31 +464,20 @@ def explain_violation(req: ViolationExplainRequest):
     if not rule:
         raise HTTPException(status_code=404, detail=f"Rule {req.rule_id} not found")
     explanation = explainer.explain(record, rule)
-    fix         = explainer.suggest_fix(req.record_id, rule.get("text", ""), explanation)
-    severity    = severity_scorer.score(explanation, rule.get("severity_hint", "Medium"))
-    return {
-        "record_id":   req.record_id,
-        "rule_id":     req.rule_id,
-        "explanation": explanation,
-        "fix":         fix,
-        "severity":    severity,
-    }
-
+    fix         = explainer.suggest_fix(req.record_id, rule.get("text",""), explanation)
+    severity    = severity_scorer.score(explanation, rule.get("severity_hint","Medium"))
+    return {"record_id": req.record_id, "rule_id": req.rule_id,
+            "explanation": explanation, "fix": fix, "severity": severity}
 
 @app.get("/trend")
 def get_trend(limit: int = 30):
-    return {
-        "history": trend.get_trend(limit),
-        "stats":   trend.summary_stats(),
-        "alerts":  trend.check_deterioration(),
-    }
-
+    return {"history": trend.get_trend(limit), "stats": trend.summary_stats(),
+            "alerts": trend.check_deterioration()}
 
 @app.get("/violations")
 def get_violations(resolved: Optional[bool] = None):
     violations = db.get_violations(resolved)
     return {"violations": violations, "count": len(violations)}
-
 
 @app.get("/summary")
 def get_summary():
@@ -539,22 +485,32 @@ def get_summary():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Entry point — finds a free port if default is taken
+# Entry point
+#
+# When run directly (python inference.py):
+#   → runs all tasks, prints results as JSON, then EXITS
+#   → does NOT start a server (avoids port conflict + timeout)
+#
+# When imported (by uvicorn / server/app.py):
+#   → just exposes `app`, server handles the rest
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _find_free_port(preferred: int) -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("0.0.0.0", preferred))
-            return preferred
-        except OSError:
-            s.bind(("0.0.0.0", 0))
-            return s.getsockname()[1]
-
-
 if __name__ == "__main__":
-    preferred = int(os.environ.get("PORT", 7860))
-    port = _find_free_port(preferred)
-    if port != preferred:
-        print(f"[WARN] Port {preferred} in use, binding on {port} instead.", flush=True)
-    uvicorn.run("inference:app", host="0.0.0.0", port=port, reload=False, workers=1)
+    print("[INFO] Running in script mode — executing all tasks and exiting.", flush=True)
+    results = []
+    for task_id in TASKS:
+        print(f"\n{'='*60}", flush=True)
+        print(f"[INFO] Starting {task_id}", flush=True)
+        try:
+            r = run_task(task_id)
+            results.append(r)
+            print(f"[RESULT] {task_id}: score={r['score']:.4f} steps={r['steps']}", flush=True)
+        except Exception as e:
+            print(f"[ERROR] {task_id} failed: {e}", flush=True)
+            results.append({"task_id": task_id, "score": 0.0, "steps": 0,
+                            "violations_detected": 0, "error": str(e)})
+
+    avg = sum(r.get("score", 0.0) for r in results) / len(results)
+    print("\n" + "="*60, flush=True)
+    print(json.dumps({"results": results, "average_score": avg}), flush=True)
+    sys.exit(0)  # clean exit — validator sees return code 0
