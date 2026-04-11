@@ -272,23 +272,13 @@ def _heuristic_action(records, rules, violations, conflicts):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _log_start(task_id):
-    print(json.dumps({"type": "START", "task_id": task_id, "timestamp": time.time()}), flush=True)
+    print(f"[START] task={task_id}", flush=True)
 
 def _log_step(step_n, action, obs, reward, done):
-    print(json.dumps({
-        "type": "STEP", "step": step_n, "action": action,
-        "reward": reward, "done": done,
-        "violations_so_far": len(obs.get("violations", [])),
-        "total_reward": obs.get("total_reward", 0.0),
-    }), flush=True)
+    print(f"[STEP] step={step_n} reward={reward}", flush=True)
 
 def _log_end(task_id, final_score, violations, steps_taken):
-    print(json.dumps({
-        "type": "END", "task_id": task_id, "final_score": final_score,
-        "steps_taken": steps_taken, "violations_detected": len(violations),
-        "violations": violations,
-    }), flush=True)
-
+    print(f"[END] task={task_id} score={final_score} steps={steps_taken}", flush=True)
 
 def run_task(task_id: str) -> dict:
     global _attempted_flags
