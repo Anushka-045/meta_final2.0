@@ -177,12 +177,15 @@ async def ingest_pdf(file: UploadFile = File(...)):
         result = pipeline.ingest_pdf_bytes(pdf_bytes, file.filename)
         for rule in result["rules"]:
             db.insert_rule(rule, source=f"pdf:{file.filename}")
-        return {"source": file.filename, "rules_extracted": result["rules_count"],
-                "rules": result["rules"], "ingested_at": result["ingested_at"]}
+        env.add_rules(result["rules"])  # <-- add PDF rules to the environment
+        return {
+            "source": file.filename,
+            "rules_extracted": result["rules_count"],
+            "rules": result["rules"],
+            "ingested_at": result["ingested_at"]
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/scan")
 def run_scan(req: ScanRequest = ScanRequest()):
     records = db.get_all_records(req.record_type)
@@ -265,5 +268,13 @@ def get_summary():
 
 # ─── entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 7860))
-    uvicorn.run("unified_server:app", host="0.0.0.0", port=port, reload=False, workers=1)
+    import uvicorn
+
+    print("[INFO] Starting FastAPI server...")
+
+    uvicorn.run(
+        "unified_server:app",   # file_name:app_variable
+        host="0.0.0.0",
+        port=7860,
+        reload=False
+    )

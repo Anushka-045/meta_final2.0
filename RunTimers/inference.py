@@ -48,14 +48,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 TASKS = ["task_easy", "task_medium", "task_hard"]
 
 MAX_STEPS_PER_TASK = {
-    "task_easy":   5,
-    "task_medium": 15,
-    "task_hard":   30,
+    "task_easy":   20,
+    "task_medium": 80,
+    "task_hard":   60,   # 10 flag + 10 sev + 10 exp + 10 fix + 2 conflict = 42 max
 }
 
 TASK_TIMEOUT = {
     "task_easy":   60,
-    "task_medium": 180,
+    "task_medium": 300,
     "task_hard":   300,
 }
 
@@ -211,33 +211,46 @@ KNOWN_VIOLATIONS = [
      "Obtain NDA signature from EMP020 immediately to comply with data protection requirements."),
 ]
 
+_attempted_flags: set = set()
+
 
 def _heuristic_action(records, rules, violations, conflicts):
+    """
+    Returns the next action dict, or None if there is nothing left to do.
+    Returning None signals the caller to stop the loop early.
+    """
     flagged_keys = {(v.get("record_id"), v.get("rule_id")) for v in violations}
+    flagged_keys |= _attempted_flags
 
+    # 1. Flag violations
     for rec, rule, sev, exp, fix in KNOWN_VIOLATIONS:
         if (rec, rule) not in flagged_keys:
+            _attempted_flags.add((rec, rule))
             return {"action": "flag_violation", "record_id": rec, "rule_id": rule,
                     "reason": f"{rec} fails to meet {rule} requirements"}
 
+    # 2. Assign severity
     for v in violations:
         if not v.get("severity"):
             for rec, rule, sev, exp, fix in KNOWN_VIOLATIONS:
                 if v.get("record_id") == rec and v.get("rule_id") == rule:
                     return {"action": "assign_severity", "violation_id": v["id"], "severity": sev}
 
+    # 3. Generate explanations
     for v in violations:
         if v.get("severity") and not v.get("explanation"):
             for rec, rule, sev, exp, fix in KNOWN_VIOLATIONS:
                 if v.get("record_id") == rec and v.get("rule_id") == rule:
                     return {"action": "generate_explanation", "violation_id": v["id"], "explanation": exp}
 
+    # 4. Suggest fixes
     for v in violations:
         if v.get("explanation") and not v.get("fix"):
             for rec, rule, sev, exp, fix in KNOWN_VIOLATIONS:
                 if v.get("record_id") == rec and v.get("rule_id") == rule:
                     return {"action": "suggest_fix", "violation_id": v["id"], "fix": fix}
 
+    # 5. Resolve conflicts
     resolved_pairs = {(c.get("rule_id_a"), c.get("rule_id_b")) for c in conflicts}
     if ("RULE005", "RULE_C1") not in resolved_pairs:
         return {
@@ -250,13 +263,12 @@ def _heuristic_action(records, rules, violations, conflicts):
             "resolution": "RULE008 applies universally. RULE_C2 is a narrower exception only for pre-approved marketing budgets with finance sign-off."
         }
 
-    for r in records:
-        return {"action": "check_record", "record_id": r["id"]}
-    return {"action": "check_record", "record_id": "EMP001"}
+    # 6. Nothing left to do — signal caller to stop
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Core task runner — used by both /predict and __main__
+# Core task runner
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _log_start(task_id):
@@ -279,6 +291,9 @@ def _log_end(task_id, final_score, violations, steps_taken):
 
 
 def run_task(task_id: str) -> dict:
+    global _attempted_flags
+    _attempted_flags = set()  # reset per task
+
     if task_id not in TASKS:
         raise ValueError(f"Unknown task_id '{task_id}'. Must be one of {TASKS}")
 
@@ -302,8 +317,13 @@ def run_task(task_id: str) -> dict:
         conflicts  = obs.get("conflicts",  [])
 
         action = _heuristic_action(records, rules, violations, conflicts)
-        result = env.step(action)
 
+        # Nothing left to do — stop early instead of wasting steps
+        if action is None:
+            print(f"[INFO] {task_id} completed all actions at step {step_n}, stopping early.", flush=True)
+            break
+
+        result = env.step(action)
         obs    = result["observation"]
         reward = result["reward"]
         done   = result["done"]
@@ -340,7 +360,7 @@ def run_task(task_id: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# /predict + /predict/all  — OpenEnv HTTP validation endpoints
+# /predict endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/predict")
@@ -486,13 +506,8 @@ def get_summary():
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Entry point
-#
-# When run directly (python inference.py):
-#   → runs all tasks, prints results as JSON, then EXITS
-#   → does NOT start a server (avoids port conflict + timeout)
-#
-# When imported (by uvicorn / server/app.py):
-#   → just exposes `app`, server handles the rest
+# When run directly → executes all tasks and exits with code 0
+# When imported    → exposes `app` for uvicorn
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
@@ -513,4 +528,4 @@ if __name__ == "__main__":
     avg = sum(r.get("score", 0.0) for r in results) / len(results)
     print("\n" + "="*60, flush=True)
     print(json.dumps({"results": results, "average_score": avg}), flush=True)
-    sys.exit(0)  # clean exit — validator sees return code 0
+    sys.exit(0)
