@@ -9,6 +9,7 @@ Combines:
   - Health check               : GET /health
 
 No OpenAI dependency — HF_TOKEN is used only for PDF ingestion.
+Optimised for 30-minute validator time limit.
 """
 
 import os
@@ -49,8 +50,21 @@ DB_PATH    = os.environ.get("DB_PATH", "compliance_db.sqlite")
 PORT       = int(os.environ.get("PORT", 7860))
 STATIC_DIR = Path(__file__).parent / "static"
 
-TASKS              = ["task_easy", "task_medium", "task_hard"]
-MAX_STEPS_PER_TASK = {"task_easy": 10, "task_medium": 60, "task_hard": 200}
+TASKS = ["task_easy", "task_medium", "task_hard"]
+
+# ⚡ Drastically reduced — must finish well within 30 min total
+MAX_STEPS_PER_TASK = {
+    "task_easy":   5,
+    "task_medium": 15,
+    "task_hard":   30,
+}
+
+# Per-task wall-clock timeout in seconds (total budget ~20 min, split across 3 tasks)
+TASK_TIMEOUT = {
+    "task_easy":   120,   # 2 min
+    "task_medium": 300,   # 5 min
+    "task_hard":   600,   # 10 min
+}
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -206,7 +220,7 @@ KNOWN_VIOLATIONS = [
 
 
 def _heuristic_action(records, rules, violations, conflicts):
-    """Deterministic compliance agent — no LLM required."""
+    """Deterministic compliance agent — no LLM, no blocking calls."""
     flagged_keys = {(v.get("record_id"), v.get("rule_id")) for v in violations}
 
     for rec, rule, sev, exp, fix in KNOWN_VIOLATIONS:
@@ -281,10 +295,16 @@ def run_task(task_id: str) -> dict:
     reset_result = env.reset(task_id=task_id, seed=42)
     obs       = reset_result["observation"]
     max_steps = MAX_STEPS_PER_TASK[task_id]
+    deadline  = time.time() + TASK_TIMEOUT[task_id]
     step_n    = 0
     done      = False
 
     while not done and step_n < max_steps:
+        # Hard wall-clock guard — never exceed per-task timeout
+        if time.time() > deadline:
+            print(f"[WARN] {task_id} hit wall-clock limit at step {step_n}, stopping early.", flush=True)
+            break
+
         records    = obs.get("records",    [])
         rules      = obs.get("rules",      [])
         violations = obs.get("violations", [])
@@ -299,7 +319,7 @@ def run_task(task_id: str) -> dict:
         step_n += 1
 
         _log_step(step_n, action, obs, reward, done)
-        time.sleep(0.05)
+        # ⚡ NO sleep — every millisecond counts inside the validator
 
     final_state      = env.state()
     final_violations = final_state.get("violations", [])
